@@ -38,7 +38,7 @@ LOG_LEVEL=info
 You then would run the container as follows...
 
 ```bash
-docker run --env-file proxy.env -p 10801:10801 <docker_image>
+docker run --env-file proxy.env -p 10801:10801 mordillo123/oauth2clientcredentialsapisidecar:latest
 ```
 
 Once the container is up an running, you will be able to make calls to the container on your configured port.  Traffic will be proxied to the downstream API with the appropriate authorization headers supplied.
