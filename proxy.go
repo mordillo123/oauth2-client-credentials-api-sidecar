@@ -4,7 +4,9 @@ package main
 // https://github.com/bechurch/reverse-proxy-demo
 
 import (
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 
 	"log"
@@ -12,22 +14,51 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
 var (
-	auth_endpoint_url    string
-	auth_client_id       string
-	auth_client_secret   string
-	auth_scope           string
-	proxy_downstream_url string
-	proxy_port           string
-	access_token         string
-	token_type           string
-	token_refresh_time   time.Time
-	api_key              string
-	api_key_header       string
+	auth_endpoint_url         string
+	auth_client_id            string
+	auth_client_secret        string
+	auth_scope                string
+	proxy_downstream_url      string
+	proxy_port                string
+	access_token              string
+	token_type                string
+	token_refresh_time        time.Time
+	downstream_api_key        string
+	downstream_api_key_header string
+	inbound_api_key           string
+	debug_enabled             bool
 )
+
+// Checks that the incoming request carries "Authorization: Bearer <INBOUND_API_KEY>"
+func isClientAuthorized(req *http.Request) bool {
+	scheme, token, found := strings.Cut(req.Header.Get("Authorization"), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(inbound_api_key)) == 1
+}
+
+func logDebug(format string, v ...any) {
+	if debug_enabled {
+		log.Printf("[DEBUG] "+format, v...)
+	}
+}
+
+// Returns a copy of the headers with sensitive values masked
+func redactHeaders(h http.Header) http.Header {
+	redacted := h.Clone()
+	for _, name := range []string{"Authorization", "Cookie", "Set-Cookie", downstream_api_key_header} {
+		if name != "" && redacted.Get(name) != "" {
+			redacted.Set(name, "**************")
+		}
+	}
+	return redacted
+}
 
 // Structure for storing results from a
 type AuthReponse struct {
@@ -46,7 +77,27 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	start := time.Now()
+	logDebug("Incoming %s %s from %s (Content-Length: %d)", req.Method, req.RequestURI, req.RemoteAddr, req.ContentLength)
+	logDebug("Incoming headers: %v", redactHeaders(req.Header))
+
+	if !isClientAuthorized(req) {
+		log.Printf("Unauthorized %s %s from %s: missing or invalid inbound API key", req.Method, req.RequestURI, req.RemoteAddr)
+		res.Header().Set("WWW-Authenticate", `Bearer realm="proxy"`)
+		http.Error(res, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	proxy := httputil.NewSingleHostReverseProxy(url)
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		log.Printf("Downstream %s %s -> %s (%s)", resp.Request.Method, resp.Request.URL, resp.Status, time.Since(start))
+		logDebug("Downstream response headers: %v", redactHeaders(resp.Header))
+		return nil
+	}
+	proxy.ErrorHandler = func(rw http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("Downstream error for %s %s after %s: %v", r.Method, r.URL, time.Since(start), err)
+		rw.WriteHeader(http.StatusBadGateway)
+	}
 
 	req.URL.Host = url.Host
 	req.URL.Scheme = url.Scheme
@@ -54,11 +105,14 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 
 	req.Header.Set("Authorization", token_type+" "+access_token)
 
-	if api_key != "" {
-		req.Header.Set(api_key_header, api_key)
+	// Never forward a client-supplied downstream API key
+	req.Header.Del(downstream_api_key_header)
+	if downstream_api_key != "" {
+		req.Header.Set(downstream_api_key_header, downstream_api_key)
 	}
 
 	log.Printf("Proxy %s %s", req.Method, req.URL)
+	logDebug("Outgoing headers: %v", redactHeaders(req.Header))
 	proxy.ServeHTTP(res, req)
 }
 
@@ -97,29 +151,48 @@ func getOuath2AuthAccessToken() {
 			continue
 		}
 
-		if resp.StatusCode != 200 && resp.StatusCode != 201 {
-			log.Printf("Received non-200 status code: %s", resp.Status)
-			continue
-		}
-
-		defer resp.Body.Close()
-
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			log.Print(err)
 			continue
 		}
 
-		//TODO: Error handling on unmarshalling the JSON payload
+		if resp.StatusCode != 200 && resp.StatusCode != 201 {
+			log.Printf("Received non-200 status code: %s", resp.Status)
+			log.Printf("Authentication error response body: %s", body)
+			continue
+		}
+		logDebug("Authentication response status: %s, body length: %d", resp.Status, len(body))
+
 		auth_response := AuthReponse{}
 		err = json.Unmarshal(body, &auth_response)
 		if err != nil {
-			log.Print(err)
+			var syntax_err *json.SyntaxError
+			var type_err *json.UnmarshalTypeError
+			switch {
+			case errors.As(err, &syntax_err):
+				log.Printf("Authentication response is not valid JSON (offset %d, Content-Type %q): %v", syntax_err.Offset, resp.Header.Get("Content-Type"), err)
+			case errors.As(err, &type_err):
+				log.Printf("Authentication response field %q has type %s, expected %s", type_err.Field, type_err.Value, type_err.Type)
+			default:
+				log.Printf("Failed to decode authentication response: %v", err)
+			}
 			continue
 		}
 
-		if auth_response.AccessToken == "" || auth_response.TokenType == "" || auth_response.ExpiresIn == 0 {
-			log.Print("Returned JSON document did not contain required fields")
+		var missing_fields []string
+		if auth_response.AccessToken == "" {
+			missing_fields = append(missing_fields, "access_token")
+		}
+		if auth_response.TokenType == "" {
+			missing_fields = append(missing_fields, "token_type")
+		}
+		if auth_response.ExpiresIn <= 0 {
+			missing_fields = append(missing_fields, "expires_in")
+		}
+		if len(missing_fields) > 0 {
+			log.Printf("Authentication response is missing or has invalid required fields: %s", strings.Join(missing_fields, ", "))
 			continue
 		}
 
@@ -128,7 +201,7 @@ func getOuath2AuthAccessToken() {
 		expires := auth_response.ExpiresIn - (60 * 5)
 		token_refresh_time = time.Now().UTC().Add(time.Second * time.Duration(expires))
 
-		log.Print("Access token updated")
+		log.Printf("Access token updated (type: %s, expires_in: %ds)", token_type, auth_response.ExpiresIn)
 		log.Printf("Token refresh scheduled at %s", token_refresh_time)
 		break
 	}
@@ -176,17 +249,27 @@ func initVariables() {
 	auth_scope = getEnvironmentVariable("AUTH_SCOPE", false, false, "")
 	proxy_downstream_url = getEnvironmentVariable("PROXY_DOWNSTREAM_URL", true, false, "")
 	proxy_port = getEnvironmentVariable("PROXY_PORT", false, false, "10801")
-	api_key = getEnvironmentVariable("PROXY_API_KEY", false, true, "")
-	if api_key != "" {
-		api_key_header = getEnvironmentVariable("PROXY_API_KEY_HEADER", false, false, "x-api-key")
+	downstream_api_key = getEnvironmentVariable("DOWNSTREAM_API_KEY", false, true, "")
+	downstream_api_key_header = strings.TrimSpace(getEnvironmentVariable("DOWNSTREAM_API_KEY_HEADER", false, false, "x-api-key"))
+	if downstream_api_key_header == "" {
+		log.Fatal("DOWNSTREAM_API_KEY_HEADER must not be empty")
+	}
+	if strings.EqualFold(downstream_api_key_header, "Authorization") {
+		log.Fatal("DOWNSTREAM_API_KEY_HEADER must not be Authorization: it would overwrite the OAuth2 access token")
+	}
+	inbound_api_key = getEnvironmentVariable("INBOUND_API_KEY", true, true, "")
+	if strings.TrimSpace(inbound_api_key) == "" {
+		log.Fatal("INBOUND_API_KEY must not be empty")
 	}
 }
 
 // Main program entrypoint
 func main() {
-	log.SetFlags(log.LstdFlags | log.LUTC)
+	log.SetFlags(log.LstdFlags | log.LUTC | log.Lmicroseconds)
 
 	log.Print("Initializing proxy")
+
+	debug_enabled = strings.EqualFold(getEnvironmentVariable("LOG_LEVEL", false, false, "debug"), "debug")
 
 	initVariables()
 
