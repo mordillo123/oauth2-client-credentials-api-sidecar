@@ -27,16 +27,18 @@ AUTH_ENDPOINT_URL=https://example.auth.us-east-1.amazoncognito.com/oauth2/token
 AUTH_CLIENT_ID=1234567890abcdef123455678
 AUTH_CLIENT_SECRET=abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnop
 AUTH_SCOPE=pets.read pets.write
-PROXY_API_KEY=thisismyapikey12345678901234567890
-PROXY_API_KEY_HEADER=x-api-key
+DOWNSTREAM_API_KEY=thisismyapikey12345678901234567890
+DOWNSTREAM_API_KEY_HEADER=x-api-key
 PROXY_DOWNSTREAM_URL=https://api.surfkansas.com
 PROXY_PORT=10801
+INBOUND_API_KEY=api_key_secret_123
+LOG_LEVEL=info
 ```
 
 You then would run the container as follows...
 
 ```bash
-docker run --env-file proxy.env -p 10801:10801 surfkansas/oauth2-client-credentials-api-sidecar
+docker run --env-file proxy.env -p 10801:10801 <docker_image>
 ```
 
 Once the container is up an running, you will be able to make calls to the container on your configured port.  Traffic will be proxied to the downstream API with the appropriate authorization headers supplied.
@@ -49,10 +51,13 @@ The proxy is completely controlled via environment variables.
 * **`AUTH_CLIENT_ID`** : The client ID that will be passed to the OAuth2 endpoint
 * **`AUTH_CLIENT_SECRET`** : The client secret that will be passed to the OAuth2 endpoint (obviously, keep this one secret and never check it into a GIT repo)
 * **`AUTH_SCOPE`** : (Optional) Space separated list of scopes to request from the OAuth2 token endpoint
-* **`PROXY_API_KEY`** : (Optional) If specified, the proxy passes this key in the API key header, which defaults to `x-api-key` but can be overridden using the `PROXY_API_KEY_HEADER` environment variable
-* **`PROXY_API_KEY_HEADER`** : (Optional, defaults to `x-api-key`) If the `PROXY_API_KEY` environment variable is specified, the API key value will be passed to the downstream with this named HTTP header
+* **`DOWNSTREAM_API_KEY`** : (Optional) If specified, the proxy passes this key in the API key header, which defaults to `x-api-key` but can be overridden using the `PROXY_API_KEY_HEADER` environment variable
+* **`DOWNSTREAM_API_KEY_HEADER`** : (Optional, defaults to `x-api-key`) If the `PROXY_API_KEY` environment variable is specified, the API key value will be passed to the downstream with this named HTTP header
 * **`PROXY_DOWNSTREAM_URL`** : Specifies the host and scheme of the downstream API to be proxied
 * **`PROXY_PORT`** : (Optional, defaults to `10801`) If supplied, specifies the port the sidecar proxy should listen on.
+* **`INBOUND_API_KEY`** : The secret or API key that the sidecar proxy verifies in order to accept incoming requests.
+* **`LOG_LEVEL`** : (Optional, defaults to `debug`) If provided, specifies the log verbosity level that the sidecar proxy should traces.
+
 
 ## Contributions
 
