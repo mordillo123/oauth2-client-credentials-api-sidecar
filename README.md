@@ -30,6 +30,7 @@ AUTH_SCOPE=pets.read pets.write
 DOWNSTREAM_API_KEY=thisismyapikey12345678901234567890
 DOWNSTREAM_API_KEY_HEADER=x-api-key
 PROXY_DOWNSTREAM_URL=https://api.surfkansas.com
+PROXY_DOWNSTREAM_WSS=wss://xxxxxxxx.execute-api.eu-east-1.amazonaws.com/env_stage/
 PROXY_PORT=10801
 INBOUND_API_KEY=api_key_secret_123
 LOG_LEVEL=info
@@ -54,6 +55,7 @@ The proxy is completely controlled via environment variables.
 * **`DOWNSTREAM_API_KEY`** : (Optional) If specified, the proxy passes this key in the API key header, which defaults to `x-api-key` but can be overridden using the `PROXY_API_KEY_HEADER` environment variable
 * **`DOWNSTREAM_API_KEY_HEADER`** : (Optional, defaults to `x-api-key`) If the `PROXY_API_KEY` environment variable is specified, the API key value will be passed to the downstream with this named HTTP header
 * **`PROXY_DOWNSTREAM_URL`** : Specifies the host and scheme of the downstream API to be proxied
+* **`PROXY_DOWNSTREAM_WSS`** : Specifies the host and scheme of the downstream WebSocket to be proxied
 * **`PROXY_PORT`** : (Optional, defaults to `10801`) If supplied, specifies the port the sidecar proxy should listen on.
 * **`INBOUND_API_KEY`** : The secret or API key that the sidecar proxy verifies in order to accept incoming requests.
 * **`LOG_LEVEL`** : (Optional, defaults to `debug`) If provided, specifies the log verbosity level that the sidecar proxy should traces.

@@ -24,6 +24,7 @@ var (
 	auth_client_secret        string
 	auth_scope                string
 	proxy_downstream_url      string
+	proxy_downstream_wss      string
 	proxy_port                string
 	access_token              string
 	token_type                string
@@ -41,6 +42,20 @@ func isClientAuthorized(req *http.Request) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(inbound_api_key)) == 1
+}
+
+func isWebSocketRequest(req *http.Request) bool {
+	if !strings.EqualFold(req.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, value := range req.Header.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func logDebug(format string, v ...any) {
@@ -70,11 +85,24 @@ type AuthReponse struct {
 // Proxies the incoming request to the downstream, adding Authorization
 // header and optional API Key header
 func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
-	url, err := url.Parse(proxy_downstream_url)
+	websocket := isWebSocketRequest(req)
+	target := proxy_downstream_url
+	if websocket {
+		target = proxy_downstream_wss
+	}
+
+	url, err := url.Parse(target)
 	if err != nil {
 		log.Print(err)
 		http.Error(res, "Failure calling downstream proxy", http.StatusInternalServerError)
 		return
+	}
+	// The HTTP transport only understands http/https; the WebSocket handshake is a plain HTTP request
+	switch strings.ToLower(url.Scheme) {
+	case "ws":
+		url.Scheme = "http"
+	case "wss":
+		url.Scheme = "https"
 	}
 
 	start := time.Now()
@@ -111,7 +139,11 @@ func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
 		req.Header.Set(downstream_api_key_header, downstream_api_key)
 	}
 
-	log.Printf("Proxy %s %s", req.Method, req.URL)
+	if websocket {
+		log.Printf("Proxy WebSocket %s %s", req.Method, req.URL)
+	} else {
+		log.Printf("Proxy %s %s", req.Method, req.URL)
+	}
 	logDebug("Outgoing headers: %v", redactHeaders(req.Header))
 	proxy.ServeHTTP(res, req)
 }
@@ -248,6 +280,7 @@ func initVariables() {
 	auth_client_secret = getEnvironmentVariable("AUTH_CLIENT_SECRET", true, true, "")
 	auth_scope = getEnvironmentVariable("AUTH_SCOPE", false, false, "")
 	proxy_downstream_url = getEnvironmentVariable("PROXY_DOWNSTREAM_URL", true, false, "")
+	proxy_downstream_wss = getEnvironmentVariable("PROXY_DOWNSTREAM_WSS", false, false, proxy_downstream_url)
 	proxy_port = getEnvironmentVariable("PROXY_PORT", false, false, "10801")
 	downstream_api_key = getEnvironmentVariable("DOWNSTREAM_API_KEY", false, true, "")
 	downstream_api_key_header = strings.TrimSpace(getEnvironmentVariable("DOWNSTREAM_API_KEY_HEADER", false, false, "x-api-key"))
