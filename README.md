@@ -6,7 +6,7 @@ Using a sidecar proxy for OAuth2 allows client application code to be more conci
 
 ## Architecture
 
-![](doc/architecture.png)
+![Architecture schema](doc/architecture.png)
 
 The sidecar proxy runs as a separate host inside of your Docker network.  The client application talks directly to the proxy over unauthenticated HTTP traffic.
 
@@ -22,7 +22,8 @@ The proxy is run as a Docker container. To use it, you need to supply a handful 
 For example, you would create an environment file called *proxy.env* with content such as the following...
 
 ```proxy.env```
-```
+
+```text
 AUTH_ENDPOINT_URL=https://example.auth.us-east-1.amazoncognito.com/oauth2/token
 AUTH_CLIENT_ID=1234567890abcdef123455678
 AUTH_CLIENT_SECRET=abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnop
@@ -46,7 +47,7 @@ Once the container is up an running, you will be able to make calls to the conta
 
 ## Environment Variables
 
-The proxy is completely controlled via environment variables. 
+The proxy is completely controlled via environment variables.
 
 * **`AUTH_ENDPOINT_URL`** : Full path to the OAuth2 token endpoint to be called when authenticating
 * **`AUTH_CLIENT_ID`** : The client ID that will be passed to the OAuth2 endpoint
@@ -60,7 +61,6 @@ The proxy is completely controlled via environment variables.
 * **`INBOUND_API_KEY`** : The secret or API key that the sidecar proxy verifies in order to accept incoming requests.
 * **`LOG_LEVEL`** : (Optional, defaults to `debug`) If provided, specifies the log verbosity level that the sidecar proxy should traces.
 
-
 ## Contributions
 
 I happily accept any feedback or pull requests to make this product better.
@@ -69,4 +69,4 @@ I happily accept any feedback or pull requests to make this product better.
 
 This product was made possible by extending and modifying an example reverse proxy created by Ben Church.
 
-https://github.com/bechurch/reverse-proxy-demo
+<https://github.com/bechurch/reverse-proxy-demo>
